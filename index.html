@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa Acadêmico PR - Busca Inteligente</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        #map { height: 100vh; width: 100%; background: #fff; }
+
+        /* PAINEL DE BUSCA REFORMULADO */
+        .search-container {
+            position: absolute;
+            top: 15px;
+            left: 55px;
+            z-index: 1000;
+            display: flex;
+            background: white;
+            padding: 5px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            border: 1px solid #ccc;
+        }
+
+        .search-container input {
+            padding: 10px;
+            border: none;
+            outline: none;
+            width: 250px;
+            font-size: 14px;
+            border-radius: 4px 0 0 4px;
+        }
+
+        .search-container button {
+            padding: 10px 15px;
+            background: #3182bd;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+        .search-container button:hover { background: #1c5a8c; }
+
+        /* RÓTULOS DISCRETOS */
+        .municipio-label {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            font-size: 8.5px !important;
+            font-weight: bold;
+            color: #333;
+            text-transform: uppercase;
+            pointer-events: none;
+            text-shadow: 1px 1px 0px #fff;
+        }
+
+        .legend {
+            line-height: 20px;
+            background: white;
+            padding: 12px;
+            border-radius: 4px;
+            border: 1px solid #999;
+            font-size: 12px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .legend i { width: 14px; height: 14px; float: left; margin-right: 8px; border: 1px solid #444; margin-top: 3px; }
+    </style>
+</head>
+<body>
+
+    <div class="search-container">
+        <input type="text" id="cityInput" list="municipiosList" placeholder="Comece a digitar o nome...">
+        <datalist id="municipiosList">
+            </datalist>
+        <button onclick="buscarMunicipio()">Buscar</button>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Utilitário para comparação de texto
+        function formatarString(str) {
+            return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+        }
+
+        const listaCidadesInteresse = [
+            "Abatiá", "Alvorada Do Sul", "Andirá", "Apucarana", "Arapongas", "Arapoti", "Assaí",
+            "Bandeirantes", "Barra Do Jacaré", "Bela Vista do Paraíso", "Califórnia", "Cambará",
+            "Cambé", "Carambeí", "Carlópolis", "Castro", "Congonhinhas", "Conselheiro Mairinck",
+            "Cornélio Procópio", "Curiúva", "Figueira", "Florestópolis", "Guapirama", "Ibaiti",
+            "Ibiporã", "Imbaú", "Itambaracá", "Jaboti", "Jacarezinho", "Jaguapitã", "Jaguariaíva",
+            "Japira", "Jataizinho", "Joaquim Távora", "Jundiaí Do Sul", "Leópolis", "Londrina",
+            "Marilândia Do Sul", "Mauá Da Serra", "Nova América Da Colina", "Nova Fátima",
+            "Nova Santa Bárbara", "Ortigueira", "Pinhalão", "Piraí Do Sul", "Porecatu",
+            "Prado Ferreira", "Primeiro De Maio", "Quatiguá", "Rancho Alegre", "Reserva",
+            "Ribeirão Claro", "Ribeirão Do Pinhal", "Rolândia", "Salto Do Itararé", "Santa Amélia",
+            "Santa Cecília Do Pavão", "Santa Mariana", "Santana Do Itararé", "Santo Antônio Da Platina",
+            "Santo Antônio Do Paraíso", "São Jerônimo Da Serra", "São José Da Boa Vista",
+            "São Sebastião Da Amoreira", "Sapopema", "Sengés", "Sertaneja", "Sertanópolis",
+            "Siqueira Campos", "Tamarana", "Telemaco Borba", "Tibagi", "Tomazina", "Uraí",
+            "Ventania", "Wenceslau Braz"
+        ];
+
+        const cidadesSet = new Set(listaCidadesInteresse.map(formatarString));
+        const map = L.map('map').setView([-23.9, -50.4], 8);
+        let geojsonLayer;
+        let camadasMunicipios = {}; 
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png').addTo(map);
+
+        function estilo(feature) {
+            const nomeGeo = formatarString(feature.properties.name);
+            let cor = '#f0f0f0';
+            let opacidade = 0.4;
+
+            if (nomeGeo === 'LONDRINA') {
+                cor = '#e6550d';
+                opacidade = 0.9;
+            } else if (cidadesSet.has(nomeGeo)) {
+                cor = '#3182bd';
+                opacidade = 0.7;
+            }
+
+            return { fillColor: cor, weight: 0.6, opacity: 1, color: '#666', fillOpacity: opacidade };
+        }
+
+        fetch('https://raw.githubusercontent.com/tbrugz/geodata-br/master/geojson/geojs-41-mun.json')
+            .then(res => res.json())
+            .then(data => {
+                const datalist = document.getElementById('municipiosList');
+                
+                geojsonLayer = L.geoJson(data, {
+                    style: estilo,
+                    onEachFeature: function(feature, layer) {
+                        const nomeOriginal = feature.properties.name;
+                        const nomeFormatado = formatarString(nomeOriginal);
+                        
+                        camadasMunicipios[nomeFormatado] = layer;
+
+                        // Adiciona todos os municípios do PR ao Autocomplete
+                        const option = document.createElement('option');
+                        option.value = nomeOriginal;
+                        datalist.appendChild(option);
+
+                        if (cidadesSet.has(nomeFormatado)) {
+                            layer.bindTooltip(nomeOriginal, {
+                                permanent: true,
+                                direction: 'center',
+                                className: 'municipio-label'
+                            }).openTooltip();
+                        }
+                    }
+                }).addTo(map);
+            });
+
+        function buscarMunicipio() {
+            const input = document.getElementById('cityInput').value;
+            const busca = formatarString(input);
+
+            if (camadasMunicipios[busca]) {
+                const camada = camadasMunicipios[busca];
+                
+                // Movimento suave e destaque
+                map.flyToBounds(camada.getBounds(), { padding: [100, 100], duration: 1.5 });
+
+                camada.setStyle({ color: '#ff0', weight: 4, fillOpacity: 0.8 });
+                setTimeout(() => geojsonLayer.resetStyle(camada), 3000);
+
+                camada.bindPopup(`<b>${camada.feature.properties.name}</b>`).openPopup();
+            } else {
+                alert("Por favor, selecione um município da lista.");
+            }
+        }
+
+        // Listener para o Enter
+        document.getElementById('cityInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') buscarMunicipio();
+        });
+    </script>
+</body>
+</html>
